@@ -1,0 +1,17 @@
+apiVersion: v2
+name: myapp
+description: |
+  A small stateful Go service backed by Postgres, demonstrating GitOps
+  deployment, persistence, observability, and rollout safety on a local
+  Kubernetes cluster.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - gitops
+  - argocd
+  - k3d
+  - template
+maintainers:
+  - name: Wesley Blake
+    url: https://github.com/WesleyCharlesBlake

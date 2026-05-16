@@ -1,0 +1,112 @@
+# kube-prometheus-stack — Prometheus, Grafana, Alertmanager, node-exporter, kube-state-metrics.
+# Sync wave -10 ensures observability comes up before workload, so the ServiceMonitor and
+# PrometheusRule CRDs exist by the time application charts try to register their scrape configs.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 65.5.1
+    helm:
+      releaseName: kps
+      values: |
+        # Disable the prometheus-operator admission webhook AND its TLS server.
+        #
+        # The admission webhook validates ServiceMonitor / PrometheusRule submissions
+        # via Helm pre-install/pre-upgrade Jobs that patch a self-signed cert into a
+        # Secret. The pattern doesn't compose cleanly with ArgoCD's reconciliation
+        # model — the Jobs frequently leave behind RBAC that blocks subsequent syncs.
+        #
+        # The chart couples these two flags: with the webhook off, the operator's
+        # TLS server has no cert source, so its tls-secret volume mount fails. Both
+        # must be disabled together.
+        #
+        # To re-enable safely in a multi-team production environment, use cert-manager
+        # to issue the admission cert (see chart values: admissionWebhooks.certManager).
+        prometheusOperator:
+          admissionWebhooks:
+            enabled: false
+            patch:
+              enabled: false
+          tls:
+            enabled: false
+
+        # Minimal Prometheus footprint for a local stack.
+        prometheus:
+          prometheusSpec:
+            retention: 7d
+            resources:
+              requests: { cpu: 100m, memory: 256Mi }
+              limits:   { cpu: 500m, memory: 512Mi }
+            # Auto-discover ServiceMonitors across all namespaces, not just the chart's
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+
+        grafana:
+          adminPassword: admin   # demo credential; production should source from a secret manager
+          service:
+            type: ClusterIP
+          ingress:
+            enabled: true
+            ingressClassName: traefik
+            hosts:
+              - grafana.localhost
+
+          # Pre-load the myapp dashboard from a ConfigMap (see myapp chart).
+          # Sidecar will auto-discover ConfigMaps with grafana_dashboard=1.
+          sidecar:
+            dashboards:
+              enabled: true
+              searchNamespace: ALL
+
+          # Pre-wire Loki as a datasource so logs panel works without manual setup.
+          additionalDataSources:
+            - name: Loki
+              type: loki
+              url: http://loki.tooling.svc.cluster.local:3100
+              access: proxy
+
+        alertmanager:
+          enabled: true
+          alertmanagerSpec:
+            resources:
+              requests: { cpu: 50m, memory: 64Mi }
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tooling
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # SSA handles CRDs and large resources cleanly without needing Replace
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 5
+      backoff: { duration: 5s, factor: 2, maxDuration: 3m }
+  # SSA can adopt existing resources, but only if their fields match the desired
+  # state. The Helm-installed RBAC has slightly different metadata; ignoring those
+  # avoids permanent OutOfSync drift.
+  ignoreDifferences:
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+      jsonPointers:
+        - /metadata/annotations
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+      jsonPointers:
+        - /metadata/annotations

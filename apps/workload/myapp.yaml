@@ -1,0 +1,39 @@
+# myapp — example Go service backed by Postgres.
+# Sources from the local Helm chart at charts/myapp/.
+# Sync wave 10 → reconciled after Postgres at sync wave 0.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/WesleyCharlesBlake/k3d-argocd-template.git
+    targetRevision: main
+    path: charts/myapp
+    helm:
+      releaseName: myapp
+      # Override values here when needed; defaults live in charts/myapp/values.yaml.
+      valueFiles:
+        - values.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: workload
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff: { duration: 5s, factor: 2, maxDuration: 3m }

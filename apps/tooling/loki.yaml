@@ -1,0 +1,65 @@
+# Loki for log aggregation. Single-binary mode is sufficient for local development.
+# Promtail (deployed alongside as a DaemonSet) ships container logs to Loki.
+# For larger production deployments, Loki can be split into distributor / ingester /
+# querier components and backed by object storage (S3, GCS, Azure Blob).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: loki-stack
+    targetRevision: 2.10.2
+    helm:
+      releaseName: loki
+      values: |
+        loki:
+          isDefault: false
+          persistence:
+            enabled: true
+            storageClassName: local-path     # k3s default
+            size: 2Gi
+
+        promtail:
+          enabled: true
+          config:
+            clients:
+              - url: http://loki:3100/loki/api/v1/push
+
+        # We're consuming Grafana from the kube-prometheus-stack chart instead.
+        grafana:
+          enabled: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tooling
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff: { duration: 5s, factor: 2, maxDuration: 3m }
+
+  # Known cosmetic drift: the Helm chart's StatefulSet volumeClaimTemplates
+  # don't include `apiVersion` / `kind`, but the API server normalises those
+  # in once the StatefulSet is created. Targeted ignore so real PVC changes
+  # (size, storageClass, etc.) still trigger a sync.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jqPathExpressions:
+        - .spec.volumeClaimTemplates[].apiVersion
+        - .spec.volumeClaimTemplates[].kind

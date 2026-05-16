@@ -1,0 +1,39 @@
+# Root "app-of-apps" Application.
+# This is the only manifest applied imperatively during bootstrap. After this,
+# ArgoCD reconciles every other Application defined under apps/ from Git.
+#
+# When forking, replace `repoURL` with your fork's URL.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/WesleyCharlesBlake/k3d-argocd-template.git
+    targetRevision: main
+    path: apps
+    directory:
+      recurse: true             # discover all Application manifests under apps/
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true               # remove resources deleted from Git
+      selfHeal: true            # revert manual cluster changes
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

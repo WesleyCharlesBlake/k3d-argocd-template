@@ -1,0 +1,49 @@
+# CloudNativePG Cluster — declarative Postgres.
+#
+# CNPG generates these Secrets on cluster bootstrap:
+#   postgres-app          username, password, dbname, pgpass, uri (for the app user)
+#   postgres-superuser    superuser credentials (only created if requested)
+#
+# And these Services:
+#   postgres-rw           always points at the primary
+#   postgres-ro           hot-standby read replicas only
+#   postgres-r            any instance (primary OR replica)
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+  namespace: workload
+spec:
+  # Single instance is appropriate for local development. Bumping to 3 yields a
+  # primary plus two streaming replicas with automatic failover — managed by the
+  # operator, no additional chart wiring needed.
+  instances: 1
+
+  # Pinned image so the database version is deterministic across recreates.
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+
+  bootstrap:
+    initdb:
+      database: myapp
+      owner: myapp                # creates Secret 'postgres-app' with these credentials
+
+  storage:
+    size: 2Gi
+    storageClass: local-path      # k3s default storage class provisioned by local-path-provisioner
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # Native Prometheus integration via PodMonitor. The CNPG operator exposes
+  # cluster-level metrics directly; no sidecar exporter container is needed.
+  monitoring:
+    enablePodMonitor: true
+    podMonitorMetricRelabelings:
+      - sourceLabels: [__name__]
+        regex: '(cnpg.+|pg_.+)'
+        action: keep

@@ -1,0 +1,98 @@
+name: release
+
+# Trigger on semver tags only (vMAJOR.MINOR.PATCH).
+# Pre-releases (v0.1.0-rc.1) and patches (v1.2.3) both match.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write       # write GitHub Release
+  packages: write       # push image to ghcr.io
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}-myapp
+
+jobs:
+  release:
+    name: Build + push semver image, cut GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # full history needed for changelog generation
+
+      # Validate the tag matches semver. Fail fast if someone pushes a malformed tag.
+      - name: Validate semver tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if ! echo "$TAG" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$' >/dev/null; then
+            echo "::error::Tag '$TAG' is not a valid semver (vMAJOR.MINOR.PATCH[-PRERELEASE])"
+            exit 1
+          fi
+          echo "✅ tag $TAG is valid semver"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # docker/metadata-action automatically generates the right tag set from a
+      # semver tag input:
+      #   - 1.2.3
+      #   - 1.2
+      #   - 1
+      #   - latest (only on stable releases, not pre-releases)
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
+          labels: |
+            org.opencontainers.image.title=myapp
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+
+      # Cut a GitHub Release with auto-generated notes from PRs/commits since the
+      # previous tag. Pre-releases (containing '-') are marked as such.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref, '-') }}
+          name: ${{ github.ref_name }}
+          body: |
+            Container image: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}`
+
+            Pull with:
+            ```
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ```

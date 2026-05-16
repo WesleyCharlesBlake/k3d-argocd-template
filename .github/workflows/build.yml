@@ -1,0 +1,127 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-flight runs on the same ref when a new commit lands.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write       # required for ghcr.io push (only used in docker-build job)
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}-myapp   # → ghcr.io/wesleycharlesblake/k3d-argocd-template-myapp
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # Go: vet, test, build sanity check
+  # ─────────────────────────────────────────────────────────────────────
+  go-test:
+    name: Go vet + test + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: go mod download
+        run: go mod download
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race -count=1 ./...
+
+      - name: go build (sanity)
+        run: go build -trimpath -o /tmp/myapp ./
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Helm: chart lint + template render check
+  # ─────────────────────────────────────────────────────────────────────
+  helm-lint:
+    name: Helm chart lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.1
+
+      - name: helm lint
+        run: helm lint charts/myapp
+
+      - name: helm template (render check)
+        run: helm template myapp charts/myapp --namespace workload --set image.tag=ci > /tmp/rendered.yaml
+
+      - name: Sanity check rendered output
+        run: |
+          test -s /tmp/rendered.yaml || (echo "rendered output is empty" && exit 1)
+          grep -q "kind: Deployment" /tmp/rendered.yaml
+          grep -q "kind: Service" /tmp/rendered.yaml
+          grep -q "kind: Ingress" /tmp/rendered.yaml
+          grep -q "kind: ServiceMonitor" /tmp/rendered.yaml
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Build + push Docker image (main branch only — PRs from forks must not push)
+  # ─────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: Build + push image
+    runs-on: ubuntu-latest
+    needs: [go-test, helm-lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=main
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.title=myapp
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=main-${{ github.sha }}
+            COMMIT=${{ github.sha }}

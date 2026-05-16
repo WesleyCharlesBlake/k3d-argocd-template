@@ -1,0 +1,43 @@
+# Postgres — the stateful dependency for myapp.
+# A CloudNativePG `Cluster` resource, sourced as raw YAML from the repo path.
+# The operator (see apps/tooling/cnpg-operator.yaml, sync wave -3) reconciles
+# this Cluster into a primary StatefulSet with PVCs, services, and a
+# bootstrap-time `postgres-app` Secret containing app credentials + connection URI.
+#
+# Sync wave 0: comes up after the operator at -3, before myapp at 10.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgres
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/WesleyCharlesBlake/k3d-argocd-template.git
+    targetRevision: main
+    path: manifests/postgres
+    directory:
+      recurse: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: workload
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # Tolerate the brief window where the CNPG CRD isn't yet installed —
+      # ArgoCD will retry rather than fail the dry-run validation.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff: { duration: 5s, factor: 2, maxDuration: 3m }

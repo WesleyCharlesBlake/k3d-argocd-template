@@ -1,0 +1,30 @@
+# k3d cluster configuration.
+# Versioned in Git so the cluster shape is reproducible across machines.
+# Apply with: k3d cluster create --config bootstrap/k3d-config.yaml
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+
+metadata:
+  name: k3d-argocd-template
+
+servers: 1
+agents: 0
+
+# Map host ports 80/443 → loadbalancer node so Traefik (k3s default ingress) is reachable
+# at http://*.localhost without port-forwarding.
+ports:
+  - port: 80:80
+    nodeFilters:
+      - loadbalancer
+  - port: 443:443
+    nodeFilters:
+      - loadbalancer
+
+options:
+  # Note: we keep servicelb (klipper-lb) enabled. It's what exposes the
+  # k3s-bundled Traefik LoadBalancer Service so the host port mapping above
+  # actually reaches Traefik. Disabling it leaves Traefik unreachable from
+  # the host even though k3d's serverlb container is listening on :80.
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

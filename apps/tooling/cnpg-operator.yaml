@@ -1,0 +1,58 @@
+# CloudNativePG operator — manages PostgreSQL clusters declaratively via the
+# Cluster CRD. Provides operator-managed Postgres with native HA (replication +
+# automatic failover), PVC management, and built-in Prometheus integration via
+# PodMonitor.
+#
+# Sync wave -3: comes up before workload (which needs the Cluster CRD), but
+# after the observability stack so the operator can register its PodMonitor.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg-operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: cloudnative-pg
+    targetRevision: 0.23.0
+    helm:
+      releaseName: cnpg
+      values: |
+        # Minimal footprint for local development.
+        # Production deployments typically use:
+        # - 2+ operator replicas with leader election for HA
+        # - A dedicated namespace selector for the PodMonitor
+        # - Tighter resource requests/limits based on observed workload
+        replicaCount: 1
+
+        monitoring:
+          podMonitorEnabled: true
+          # Match the kube-prometheus-stack release label so the operator's
+          # own metrics get scraped.
+          podMonitorAdditionalLabels:
+            release: kps
+
+        resources:
+          requests: { cpu: 50m, memory: 100Mi }
+          limits:   { cpu: 200m, memory: 200Mi }
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff: { duration: 5s, factor: 2, maxDuration: 3m }

@@ -1,0 +1,28 @@
+# Local builds and binaries
+app/myapp
+app/dist/
+*.exe
+
+# Go
+*.out
+*.test
+coverage.txt
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local secrets (should never be committed — using sealed-secrets / Vault in real life)
+*.local.yaml
+secrets/
+
+# Helm dependencies (regenerated on demand)
+charts/myapp/charts/
+charts/myapp/Chart.lock
+
+# kubeconfig copies
+kubeconfig
+*.kubeconfig
+

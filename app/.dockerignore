@@ -1,0 +1,11 @@
+# Avoid pushing the build context unnecessarily through the Docker daemon.
+.git
+.gitignore
+README.md
+*.md
+*.test
+*.out
+coverage.txt
+.idea
+.vscode
+.DS_Store

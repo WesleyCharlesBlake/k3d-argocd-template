@@ -1,0 +1,93 @@
+name: argocd-diff-preview
+
+# Renders the ArgoCD-managed manifests on both base (main) and the PR branch,
+# diffs them, and posts the result as a PR comment. Reviewers see exactly
+# what would change in the cluster before merging.
+#
+# Only runs when GitOps-touching paths change.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/**'
+      - 'charts/**'
+      - 'bootstrap/argocd/**'
+      - '.github/workflows/argocd-diff-preview.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: argocd-diff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Render and diff
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          path: pull-request
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
+
+      # Mount a Secret manifest so argocd-diff-preview's internal ArgoCD can
+      # fetch this private repo when resolving `repoURL` references inside
+      # Application manifests. GITHUB_TOKEN has read access to the same repo
+      # that's running the workflow, so this is the simplest auth path.
+      - name: Prepare repo credentials
+        run: |
+          mkdir -p secrets
+          cat > secrets/repo-creds.yaml <<EOF
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: k3d-argocd-template-creds
+            namespace: argocd
+            labels:
+              argocd.argoproj.io/secret-type: repository
+          stringData:
+            url: ${{ github.server_url }}/${{ github.repository }}
+            username: not-used
+            password: ${{ secrets.GITHUB_TOKEN }}
+          EOF
+
+      - name: Generate diff
+        run: |
+          mkdir -p output
+          docker run \
+            --network=host \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $(pwd)/main:/base-branch \
+            -v $(pwd)/pull-request:/target-branch \
+            -v $(pwd)/secrets:/secrets \
+            -v $(pwd)/output:/output \
+            -e TARGET_BRANCH=refs/pull/${{ github.event.number }}/merge \
+            -e BASE_BRANCH=main \
+            -e REPO=${{ github.repository }} \
+            dagandersen/argocd-diff-preview:v0.2.4
+
+      - name: Post diff as PR comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -s output/diff.md ]; then
+            echo "No diff to post."
+            exit 0
+          fi
+          gh pr comment ${{ github.event.number }} \
+            --repo ${{ github.repository }} \
+            --body-file output/diff.md \
+            --edit-last \
+            || gh pr comment ${{ github.event.number }} \
+                 --repo ${{ github.repository }} \
+                 --body-file output/diff.md

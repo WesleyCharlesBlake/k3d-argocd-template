@@ -1,0 +1,105 @@
+# Default values for myapp.
+# Override per-environment via valueFiles in the ArgoCD Application.
+
+image:
+  repository: ghcr.io/wesleycharlesblake/k3d-argocd-template-myapp
+  pullPolicy: IfNotPresent
+  # Tag of "" falls back to .Chart.AppVersion. Override per release.
+  tag: ""
+
+replicaCount: 2
+
+# Database connection.
+# CloudNativePG auto-creates a Secret `postgres-app` on cluster bootstrap
+# containing a ready-to-use `uri` (username, password, host, port, dbname, SSL
+# mode all baked in). Consuming `uri` directly keeps the connection string in
+# one place rather than reconstructed in the deployment template.
+#
+# In production, the same Secret would typically be populated by
+# external-secrets-operator from a secret manager (Vault, AWS Secrets Manager,
+# etc.) rather than created by the operator directly.
+database:
+  connectionSecret:
+    name: postgres-app
+    key: uri
+
+# Service exposes /healthz, /readyz, /metrics, and the app's API.
+service:
+  type: ClusterIP
+  port: 8080
+
+# Ingress via Traefik (the default ingress controller in k3s).
+# *.localhost resolves to 127.0.0.1 on most systems; otherwise add to /etc/hosts.
+ingress:
+  enabled: true
+  className: traefik
+  hosts:
+    - host: myapp.localhost
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Probes. Liveness intentionally does NOT check the database — kubelet should
+# not restart the pod just because Postgres is temporarily unavailable.
+# Readiness gates traffic, so when the DB is unreachable the pod is removed
+# from the Service's endpoint set and traffic is shed gracefully.
+probes:
+  liveness:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    httpGet:
+      path: /readyz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 3
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# Prometheus scrape configuration via ServiceMonitor.
+# The kube-prometheus-stack release label `release: kps` must match for the
+# Prometheus operator's serviceMonitorSelector to pick it up.
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  path: /metrics
+  labels:
+    release: kps
+
+# Pre-built Grafana dashboard, delivered as a ConfigMap labelled
+# `grafana_dashboard: "1"`. The kube-prometheus-stack Grafana sidecar
+# auto-discovers and loads it — no manual import needed.
+dashboard:
+  enabled: true
+
+# Rolling update strategy.
+# maxUnavailable: 0 means a new pod failing readiness halts the rollout
+# without losing capacity — the simplest form of progressive delivery
+# without an additional CRD like Argo Rollouts.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# PodDisruptionBudget — ensures at least one replica stays up during voluntary
+# disruptions (node drains, cluster upgrades). Pairs with replicaCount: 2.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Note: database migrations run on startup inside the application (idempotent
+# SQL embedded via go:embed). For larger projects, a separate Helm pre-install
+# / pre-upgrade Job is the common pattern, so a failed migration can't
+# crashloop the application.

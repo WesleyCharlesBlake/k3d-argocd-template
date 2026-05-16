@@ -1,0 +1,24 @@
+{{- if .Values.serviceMonitor.enabled -}}
+# ServiceMonitor — kube-prometheus-stack auto-discovers these and adds them
+# to Prometheus's scrape config. The `release: kps` label has to match the
+# Prometheus operator's serviceMonitorSelector.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "myapp.fullname" . }}
+  labels:
+    {{- include "myapp.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "myapp.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.serviceMonitor.path }}
+      interval: {{ .Values.serviceMonitor.interval }}
+      # honorLabels=true preserves any labels the app emits, vs. relabeling them away.
+      honorLabels: true
+{{- end }}
