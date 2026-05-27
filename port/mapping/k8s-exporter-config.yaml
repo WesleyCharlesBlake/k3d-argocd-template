@@ -1,0 +1,117 @@
+# Port K8s exporter mapping — translates Kubernetes resources into Port entities.
+#
+# This is the contract between cluster state and the IDP catalog: every kind
+# listed here becomes (or updates) an entity in Port. The JQ in each `port`
+# block extracts the fields the blueprints declared in port/blueprints/.
+#
+# Conventions:
+#   - identifier: stable, derivable from cluster facts (never random)
+#   - hasFoo bools are derived from labels/annotations the chart sets, so
+#     the scorecard rules in port/scorecards/ are checkable without a custom
+#     CRD walker.
+
+resources:
+  # ─── runningService: one entity per Deployment in the workload namespace ───
+  - kind: apps/v1/deployments
+    selector:
+      query: .metadata.namespace == "workload"
+    port:
+      entity:
+        mappings:
+          - identifier: '"\(.metadata.name)-\(env.CLUSTER_NAME)"'
+            title: .metadata.name
+            blueprint: '"runningService"'
+            properties:
+              imageTag: .spec.template.spec.containers[0].image | split(":") | .[1] // "latest"
+              replicas: .spec.replicas
+              availableReplicas: .status.availableReplicas
+              namespace: .metadata.namespace
+              hasHealthz: '(.spec.template.spec.containers[0].livenessProbe.httpGet.path == "/healthz")'
+              hasReadyz: '(.spec.template.spec.containers[0].readinessProbe.httpGet.path == "/readyz")'
+            relations:
+              service: .metadata.labels."app.kubernetes.io/name" // .metadata.name
+              cluster: env.CLUSTER_NAME
+
+  # ─── ArgoCD Application sync/health → enriches runningService ───
+  # Same identifier as the Deployment so Port merges the properties.
+  - kind: argoproj.io/v1alpha1/applications
+    selector:
+      query: '.spec.destination.namespace == "workload"'
+    port:
+      entity:
+        mappings:
+          - identifier: '"\(.metadata.name)-\(env.CLUSTER_NAME)"'
+            blueprint: '"runningService"'
+            properties:
+              argocdSyncStatus: .status.sync.status
+              argocdHealth: .status.health.status
+
+  # ─── argocdApplication: one entity per Application across all namespaces ───
+  - kind: argoproj.io/v1alpha1/applications
+    selector:
+      query: 'true'
+    port:
+      entity:
+        mappings:
+          - identifier: '"\(.metadata.name)-\(env.CLUSTER_NAME)"'
+            title: .metadata.name
+            blueprint: '"argocdApplication"'
+            properties:
+              syncStatus: .status.sync.status
+              health: .status.health.status
+              repoURL: .spec.source.repoURL
+              targetRevision: .spec.source.targetRevision
+              path: .spec.source.path
+              destinationNamespace: .spec.destination.namespace
+              syncWave: '.metadata.annotations["argocd.argoproj.io/sync-wave"]'
+            relations:
+              cluster: env.CLUSTER_NAME
+
+  # ─── hasServiceMonitor: derived from monitoring.coreos.com/v1 ServiceMonitors ───
+  # Matches by label app.kubernetes.io/name == <deployment name>
+  - kind: monitoring.coreos.com/v1/servicemonitors
+    selector:
+      query: '.metadata.namespace == "workload"'
+    port:
+      entity:
+        mappings:
+          - identifier: '"\(.metadata.labels."app.kubernetes.io/name")-\(env.CLUSTER_NAME)"'
+            blueprint: '"runningService"'
+            properties:
+              hasServiceMonitor: true
+
+  - kind: monitoring.coreos.com/v1/prometheusrules
+    selector:
+      query: '.metadata.namespace == "workload"'
+    port:
+      entity:
+        mappings:
+          - identifier: '"\(.metadata.labels."app.kubernetes.io/name")-\(env.CLUSTER_NAME)"'
+            blueprint: '"runningService"'
+            properties:
+              hasAlerts: true
+
+  - kind: policy/v1/poddisruptionbudgets
+    selector:
+      query: '.metadata.namespace == "workload"'
+    port:
+      entity:
+        mappings:
+          - identifier: '"\(.metadata.labels."app.kubernetes.io/name")-\(env.CLUSTER_NAME)"'
+            blueprint: '"runningService"'
+            properties:
+              hasPDB: true
+
+  # Grafana picks up dashboards by label `grafana_dashboard: "1"`. The chart
+  # tags its dashboard ConfigMap with `app.kubernetes.io/name` so we can map
+  # it back to the runningService entity.
+  - kind: v1/configmaps
+    selector:
+      query: '.metadata.labels.grafana_dashboard == "1" and .metadata.namespace == "workload"'
+    port:
+      entity:
+        mappings:
+          - identifier: '"\(.metadata.labels."app.kubernetes.io/name")-\(env.CLUSTER_NAME)"'
+            blueprint: '"runningService"'
+            properties:
+              hasDashboard: true

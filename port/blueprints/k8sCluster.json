@@ -1,0 +1,39 @@
+{
+  "identifier": "k8sCluster",
+  "title": "Kubernetes Cluster",
+  "icon": "Cluster",
+  "description": "A Kubernetes cluster managed by this platform. One entity per k3d / EKS / GKE / AKS cluster the platform manages.",
+  "schema": {
+    "properties": {
+      "environment": {
+        "type": "string",
+        "title": "Environment",
+        "enum": ["local", "dev", "staging", "prod"],
+        "enumColors": {
+          "local": "lightGray",
+          "dev": "blue",
+          "staging": "orange",
+          "prod": "red"
+        }
+      },
+      "version": {
+        "type": "string",
+        "title": "Kubernetes version"
+      },
+      "argocdUrl": {
+        "type": "string",
+        "format": "url",
+        "title": "ArgoCD URL"
+      },
+      "grafanaUrl": {
+        "type": "string",
+        "format": "url",
+        "title": "Grafana URL"
+      }
+    },
+    "required": ["environment"]
+  },
+  "calculationProperties": {},
+  "mirrorProperties": {},
+  "relations": {}
+}

@@ -1,0 +1,54 @@
+{
+  "identifier": "service",
+  "title": "Service",
+  "icon": "Microservice",
+  "description": "A deployable software unit owned by a team. The catalog entry for things like `myapp`. Source of truth lives in the git repo (chart + ArgoCD Application); Port reflects it.",
+  "schema": {
+    "properties": {
+      "language": {
+        "type": "string",
+        "title": "Language",
+        "enum": ["Go", "TypeScript", "Python", "Rust", "Java", "Other"],
+        "default": "Go"
+      },
+      "repository": {
+        "type": "string",
+        "format": "url",
+        "title": "Repository"
+      },
+      "chartPath": {
+        "type": "string",
+        "title": "Helm chart path",
+        "description": "Path within the repo to the service's Helm chart (e.g. charts/myapp)"
+      },
+      "tier": {
+        "type": "string",
+        "title": "Tier",
+        "enum": ["1", "2", "3"],
+        "enumColors": {
+          "1": "red",
+          "2": "orange",
+          "3": "green"
+        },
+        "description": "1 = customer-facing critical, 3 = internal/best-effort"
+      },
+      "oncall": {
+        "type": "string",
+        "title": "On-call team"
+      },
+      "slackChannel": {
+        "type": "string",
+        "title": "Slack channel"
+      },
+      "readme": {
+        "type": "string",
+        "format": "markdown",
+        "title": "README"
+      }
+    },
+    "required": ["language", "repository"]
+  },
+  "calculationProperties": {},
+  "mirrorProperties": {},
+  "relations": {}
+}

@@ -1,0 +1,46 @@
+name: port-deploy-event
+
+# Mirrors release.yml — runs in parallel on the same semver tag push, emits a
+# Deployment entity to Port so the catalog has a record of every release.
+#
+# Why a separate workflow vs. inlining into release.yml? Decouples Port
+# reporting from the image build path. If Port is down or unconfigured, the
+# release still ships.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    if: ${{ vars.PORT_ENABLED == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Emit Deployment entity to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: UPSERT
+          identifier: 'deploy-${{ github.run_id }}'
+          title: 'myapp ${{ github.ref_name }}'
+          blueprint: deployment
+          properties: |
+            {
+              "gitSha": "${{ github.sha }}",
+              "imageTag": "${{ github.ref_name }}",
+              "triggeredBy": "${{ github.actor }}",
+              "status": "in_progress",
+              "createdAt": "${{ github.event.head_commit.timestamp }}"
+            }
+          relations: |
+            {
+              "service": "myapp",
+              "cluster": "k3d-argocd-template"
+            }

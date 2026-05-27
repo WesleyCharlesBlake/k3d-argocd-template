@@ -1,0 +1,65 @@
+{
+  "identifier": "deployment",
+  "title": "Deployment",
+  "icon": "Rocket",
+  "description": "A discrete release event: a commit/tag rolled out to a cluster. Emitted by the GitHub Actions release workflow when an image is pushed and reconciled.",
+  "schema": {
+    "properties": {
+      "gitSha": {
+        "type": "string",
+        "title": "Git SHA"
+      },
+      "imageTag": {
+        "type": "string",
+        "title": "Image tag"
+      },
+      "triggeredBy": {
+        "type": "string",
+        "format": "user",
+        "title": "Triggered by"
+      },
+      "status": {
+        "type": "string",
+        "title": "Status",
+        "enum": ["pending", "in_progress", "succeeded", "failed", "rolled_back"],
+        "enumColors": {
+          "pending": "lightGray",
+          "in_progress": "blue",
+          "succeeded": "green",
+          "failed": "red",
+          "rolled_back": "orange"
+        }
+      },
+      "argocdSyncId": {
+        "type": "string",
+        "title": "ArgoCD sync ID"
+      },
+      "durationSeconds": {
+        "type": "number",
+        "title": "Duration (s)"
+      },
+      "createdAt": {
+        "type": "string",
+        "format": "date-time",
+        "title": "Started at"
+      }
+    },
+    "required": ["gitSha", "imageTag", "status"]
+  },
+  "calculationProperties": {},
+  "mirrorProperties": {},
+  "relations": {
+    "service": {
+      "title": "Service",
+      "target": "service",
+      "required": true,
+      "many": false
+    },
+    "cluster": {
+      "title": "Cluster",
+      "target": "k8sCluster",
+      "required": false,
+      "many": false
+    }
+  }
+}

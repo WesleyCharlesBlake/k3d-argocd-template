@@ -1,0 +1,176 @@
+# Port K8s exporter — the bridge between cluster state and Port's catalog.
+#
+# Watches Deployments, ArgoCD Applications, ServiceMonitors, PrometheusRules,
+# PDBs, and dashboard ConfigMaps; translates them into Port entities using the
+# mapping config inlined below (the canonical copy lives in
+# port/mapping/k8s-exporter-config.yaml — keep in sync).
+#
+# Gated on the `port-credentials` Secret existing in the `tooling` namespace.
+# If the Secret isn't present, ArgoCD will report this Application as
+# `Progressing` (the pod will CrashLoopBackOff on missing env) but nothing
+# else in the stack is affected. Run `make port-bootstrap` to create the
+# Secret from $PORT_CLIENT_ID and $PORT_CLIENT_SECRET.
+#
+# Sync wave -2: after the operators that own CRDs we read (kube-prometheus-stack
+# at -10 for ServiceMonitor/PrometheusRule), before the workload itself so
+# the exporter is ready by the time deployments come up.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: port-k8s-exporter
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://port-labs.github.io/helm-charts
+    chart: port-k8s-exporter
+    targetRevision: 0.5.4
+    helm:
+      releaseName: port-k8s-exporter
+      values: |
+        # Credentials live in an externally-created Secret so they're never
+        # committed to Git. See `make port-bootstrap`.
+        secret:
+          useExistingSecret:
+            name: port-credentials
+
+        # State key namespaces the exporter's checkpoint in Port's storage,
+        # so multiple clusters (dev/staging/prod) can sync into the same
+        # Port org without clobbering each other.
+        stateKey: k3d-argocd-template
+
+        # CLUSTER_NAME is referenced by the mapping JQ to build stable
+        # cross-cluster entity identifiers (e.g. "myapp-k3d-argocd-template").
+        extraEnv:
+          - name: CLUSTER_NAME
+            value: k3d-argocd-template
+
+        # createDefaultResources=false → we own blueprints + scorecards as
+        # IaC under port/. The exporter only writes entities, never schema.
+        createDefaultResources: false
+
+        # Inline copy of port/mapping/k8s-exporter-config.yaml. Kept here so
+        # the chart is self-contained for ArgoCD; the file in port/mapping
+        # is the human source of truth and what reviewers diff against.
+        configMap:
+          config: |
+            resources:
+              - kind: apps/v1/deployments
+                selector:
+                  query: .metadata.namespace == "workload"
+                port:
+                  entity:
+                    mappings:
+                      - identifier: '"\(.metadata.name)-\(env.CLUSTER_NAME)"'
+                        title: .metadata.name
+                        blueprint: '"runningService"'
+                        properties:
+                          imageTag: .spec.template.spec.containers[0].image | split(":") | .[1] // "latest"
+                          replicas: .spec.replicas
+                          availableReplicas: .status.availableReplicas
+                          namespace: .metadata.namespace
+                          hasHealthz: '(.spec.template.spec.containers[0].livenessProbe.httpGet.path == "/healthz")'
+                          hasReadyz: '(.spec.template.spec.containers[0].readinessProbe.httpGet.path == "/readyz")'
+                        relations:
+                          service: .metadata.labels."app.kubernetes.io/name" // .metadata.name
+                          cluster: env.CLUSTER_NAME
+
+              - kind: argoproj.io/v1alpha1/applications
+                selector:
+                  query: '.spec.destination.namespace == "workload"'
+                port:
+                  entity:
+                    mappings:
+                      - identifier: '"\(.metadata.name)-\(env.CLUSTER_NAME)"'
+                        blueprint: '"runningService"'
+                        properties:
+                          argocdSyncStatus: .status.sync.status
+                          argocdHealth: .status.health.status
+
+              - kind: argoproj.io/v1alpha1/applications
+                selector:
+                  query: 'true'
+                port:
+                  entity:
+                    mappings:
+                      - identifier: '"\(.metadata.name)-\(env.CLUSTER_NAME)"'
+                        title: .metadata.name
+                        blueprint: '"argocdApplication"'
+                        properties:
+                          syncStatus: .status.sync.status
+                          health: .status.health.status
+                          repoURL: .spec.source.repoURL
+                          targetRevision: .spec.source.targetRevision
+                          path: .spec.source.path
+                          destinationNamespace: .spec.destination.namespace
+                          syncWave: '.metadata.annotations["argocd.argoproj.io/sync-wave"]'
+                        relations:
+                          cluster: env.CLUSTER_NAME
+
+              - kind: monitoring.coreos.com/v1/servicemonitors
+                selector:
+                  query: '.metadata.namespace == "workload"'
+                port:
+                  entity:
+                    mappings:
+                      - identifier: '"\(.metadata.labels."app.kubernetes.io/name")-\(env.CLUSTER_NAME)"'
+                        blueprint: '"runningService"'
+                        properties:
+                          hasServiceMonitor: true
+
+              - kind: monitoring.coreos.com/v1/prometheusrules
+                selector:
+                  query: '.metadata.namespace == "workload"'
+                port:
+                  entity:
+                    mappings:
+                      - identifier: '"\(.metadata.labels."app.kubernetes.io/name")-\(env.CLUSTER_NAME)"'
+                        blueprint: '"runningService"'
+                        properties:
+                          hasAlerts: true
+
+              - kind: policy/v1/poddisruptionbudgets
+                selector:
+                  query: '.metadata.namespace == "workload"'
+                port:
+                  entity:
+                    mappings:
+                      - identifier: '"\(.metadata.labels."app.kubernetes.io/name")-\(env.CLUSTER_NAME)"'
+                        blueprint: '"runningService"'
+                        properties:
+                          hasPDB: true
+
+              - kind: v1/configmaps
+                selector:
+                  query: '.metadata.labels.grafana_dashboard == "1" and .metadata.namespace == "workload"'
+                port:
+                  entity:
+                    mappings:
+                      - identifier: '"\(.metadata.labels."app.kubernetes.io/name")-\(env.CLUSTER_NAME)"'
+                        blueprint: '"runningService"'
+                        properties:
+                          hasDashboard: true
+
+        resources:
+          requests: { cpu: 50m, memory: 80Mi }
+          limits:   { cpu: 200m, memory: 256Mi }
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tooling
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff: { duration: 5s, factor: 2, maxDuration: 3m }

@@ -1,6 +1,6 @@
 # k3d + ArgoCD local development template
 
-A complete local Kubernetes development environment with GitOps, observability, and a stateful example workload. Bootstrap a k3d cluster, get full LGTM observability, a CloudNativePG-managed Postgres, and a sample Go service — all reconciled from Git by ArgoCD.
+A complete local Kubernetes development environment with GitOps, observability, an Internal Developer Platform, and a stateful example workload. Bootstrap a k3d cluster, get full LGTM observability, a CloudNativePG-managed Postgres, a Port (IDP) catalog with self-service actions, and a sample Go service — all reconciled from Git by ArgoCD.
 
 Designed to be forked as a starting point for your own GitOps projects, or used as a reference for the patterns it demonstrates.
 
@@ -10,9 +10,10 @@ Designed to be forked as a starting point for your own GitOps projects, or used 
 - **ArgoCD** — reconciles everything else from Git via the app-of-apps pattern.
 - **LGTM observability stack** — Loki, Grafana, Tempo-style metric scraping via Prometheus, Mimir-equivalent storage (in-cluster Prometheus), Alertmanager — courtesy of `kube-prometheus-stack` + Loki + Promtail.
 - **CloudNativePG** — operator-managed Postgres with native HA, replication, and Prometheus integration.
+- **Port (IDP) layer** — the developer-facing pane: a catalog populated from live cluster state, self-service actions (bump tag, scaffold service, rollback) that all open PRs, and a production-readiness scorecard wired to what the chart actually templates. Optional, env-gated.
 - **Example Go workload (`myapp`)** — production-shaped Go service with `/healthz`, `/readyz`, `/metrics`, structured logging, graceful shutdown, and a CRUD API backed by Postgres.
 - **Helm chart** — full template with Deployment, Service, Ingress, ServiceMonitor, PrometheusRule, PDB, and an auto-loaded Grafana dashboard ConfigMap.
-- **CI/CD workflows** — GitHub Actions for Go test + chart lint + image build, semver-tag-driven releases, and ArgoCD diff previews on PRs.
+- **CI/CD workflows** — GitHub Actions for Go test + chart lint + image build, semver-tag-driven releases, ArgoCD diff previews on PRs, and Port-driven self-service flows.
 
 ## Prerequisites
 
@@ -46,6 +47,16 @@ make bootstrap
 
 Public forks don't need a PAT — ArgoCD fetches anonymously.
 
+To light up the **Port (IDP) layer**, set Port API credentials (free org at [getport.io](https://www.getport.io/)) and run `port-bootstrap` after the cluster is up:
+
+```bash
+export PORT_CLIENT_ID=...
+export PORT_CLIENT_SECRET=...
+make port-bootstrap   # pushes blueprints/actions/scorecards + creates in-cluster Secret
+```
+
+If those env vars aren't set, the rest of the stack still bootstraps cleanly — the Port layer is fully optional.
+
 ---
 
 ## Architecture
@@ -56,10 +67,12 @@ flowchart TB
     classDef tooling fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef workload fill:#fff3e0,stroke:#e65100,color:#bf360c
     classDef control fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c
+    classDef idp fill:#fce4ec,stroke:#ad1457,color:#880e4f
 
     Dev[Engineer]:::ext
     GH[(GitHub<br/>fork of this template)]:::ext
     User[End user]:::ext
+    Port[(Port — IDP catalog<br/>self-service actions)]:::idp
 
     subgraph k3d["k3d cluster — k3s in Docker (macOS / Linux)"]
         direction TB
@@ -69,13 +82,14 @@ flowchart TB
             Argo[ArgoCD server +<br/>application controller]:::control
         end
 
-        subgraph tooling["tooling namespace — sync waves -10, -5, -3"]
+        subgraph tooling["tooling namespace — sync waves -10, -5, -3, -2"]
             direction LR
             Prom[Prometheus]:::tooling
             Graf[Grafana]:::tooling
             Loki[Loki + Promtail]:::tooling
             AM[Alertmanager]:::tooling
             CNPGOp[CNPG operator]:::tooling
+            Exporter[port-k8s-exporter]:::idp
         end
 
         subgraph workload["workload namespace — sync waves 0, 10"]
@@ -87,6 +101,8 @@ flowchart TB
     end
 
     Dev -->|git push| GH
+    Dev -->|self-service action| Port
+    Port -.->|opens PR| GH
     GH -.->|polled every 3m| Argo
     Root -.->|reconciles| Argo
     Argo -->|sync wave -10| Prom
@@ -94,8 +110,10 @@ flowchart TB
     Argo -->|sync wave -5| Loki
     Argo -->|sync wave -10| AM
     Argo -->|sync wave -3| CNPGOp
+    Argo -->|sync wave -2| Exporter
     Argo -->|sync wave 0| PG
     Argo -->|sync wave 10| App
+    Exporter -.->|push entities + status| Port
 
     User -->|http://myapp.localhost| Traefik
     Traefik --> App
@@ -146,6 +164,7 @@ sequenceDiagram
 | **kube-prometheus-stack** | Prometheus, Grafana, Alertmanager, exporters | One chart for the whole observability foundation. ServiceMonitor and PrometheusRule CRDs let workloads self-register their scrape and alert configs. |
 | **Loki + Promtail** | Log aggregation | Loki for storage and query, Promtail as a DaemonSet shipping container logs. Single-binary mode for local; production deployments split into distributor / ingester / querier + object storage. |
 | **CloudNativePG** | Operator-managed Postgres | The `Cluster` CRD reconciles to a StatefulSet with PVCs, services, and auto-generated app credentials (`postgres-app` Secret containing a ready-to-use `uri`). Native HA available by bumping `instances: 1 → 3`. Alternative: Crunchy Postgres Operator, the Bitnami Helm chart. |
+| **Port (IDP)** | Developer-facing catalog + self-service | Pulls live state from the cluster (via `port-k8s-exporter`) and exposes a UI for browsing services, scorecards, and self-service actions. Actions never touch the cluster directly — they open PRs against this repo, so the GitOps loop stays the single source of change. Blueprints / actions / scorecards live as JSON IaC under `port/`. Alternatives: Backstage (heavier, self-hosted), CNOE, OpsLevel, Cortex. |
 | **myapp (Go)** | Example workload | Small CRUD service over Postgres, exposing `/healthz`, `/readyz`, `/metrics`. Designed as a starting template for your own workloads. |
 | **Helm** | Chart templating | Used here for the local `myapp` chart and for sourcing upstream charts. Alternative: Kustomize for overlays. |
 | **Traefik** (k3s default) | Ingress controller | Bundled with k3s, no extra setup. Production alternatives: NGINX Ingress, Envoy Gateway, Istio Gateway. |
@@ -173,7 +192,8 @@ sequenceDiagram
 │   ├── tooling/
 │   │   ├── kube-prometheus-stack.yaml
 │   │   ├── loki.yaml
-│   │   └── cnpg-operator.yaml
+│   │   ├── cnpg-operator.yaml
+│   │   └── port-k8s-exporter.yaml # IDP: pushes cluster state to Port
 │   └── workload/
 │       ├── postgres.yaml          # ArgoCD Application -> manifests/postgres/
 │       └── myapp.yaml
@@ -185,6 +205,12 @@ sequenceDiagram
 │       ├── Chart.yaml
 │       ├── values.yaml
 │       └── templates/
+├── port/                          # IDP-as-code (Port blueprints, actions, scorecards)
+│   ├── blueprints/                #   entity schemas (Service, RunningService, ...)
+│   ├── actions/                   #   self-service buttons (bump-tag, scaffold, rollback)
+│   ├── scorecards/                #   production-readiness quality gates
+│   ├── mapping/                   #   cluster → catalog JQ (canonical copy)
+│   └── README.md
 └── app/                           # Go service source code
     ├── main.go
     ├── go.mod
@@ -202,6 +228,7 @@ The **app-of-apps** pattern means only one manifest (`bootstrap/argocd/root-app.
 | `-10` | `kube-prometheus-stack` | ServiceMonitor + PrometheusRule CRDs must exist first |
 | `-5` | `loki` | Independent observability component |
 | `-3` | `cnpg-operator` | Postgres `Cluster` CRD must exist before workload sync |
+| `-2` | `port-k8s-exporter` | Bridges cluster state to the IDP catalog; needs ServiceMonitor + Application CRDs (provided by earlier waves) |
 | `0` | `postgres` | The CloudNativePG Cluster CR |
 | `10` | `myapp` | Depends on Postgres being ready |
 
@@ -373,6 +400,107 @@ The output is what reviewers want to see: not a `git diff` of YAML templates, bu
 
 ---
 
+## Port — the IDP layer that ties this together
+
+The stack so far gives you GitOps, observability, and a real workload. What it doesn't give you is the *developer-facing pane* — a single place where someone can browse "what's running, who owns it, is it healthy, what scorecard is it on, and what can I do about it." That's what Port adds.
+
+The design rule for this integration: **Port is a trigger layer, not a truth layer.** Every self-service action ends in a PR against this repo. Cluster mutations still flow through ArgoCD reconciliation. Git stays the only path to change.
+
+### How it ties to the existing stack
+
+| Existing piece | What Port reflects |
+|---|---|
+| ArgoCD Application status | `runningService.argocdSyncStatus`, `runningService.argocdHealth`, plus a separate `argocdApplication` entity per Application |
+| Deployment in `workload` namespace | `runningService` entity with image tag, replicas, namespace, owning Service |
+| ServiceMonitor / PrometheusRule / PDB / dashboard ConfigMap | Boolean scorecard properties (`hasServiceMonitor`, `hasAlerts`, `hasPDB`, `hasDashboard`) |
+| `make dev-deploy` (the GitOps lever) | "Bump image tag" self-service action — opens the same `values.yaml` edit as a PR |
+| `git revert` of a tag bump | "Roll back to previous tag" action, with required approval |
+| New service via copying the chart | "Scaffold new service" action — clones `charts/myapp` + writes a new ArgoCD Application |
+
+### IDP-as-code
+
+```
+port/
+├── blueprints/    # the "types" — Service, RunningService, K8sCluster, ArgoCD App, Deployment
+├── actions/       # the "buttons" — bump-tag, scaffold-service, rollback
+├── scorecards/    # production-readiness gates wired to chart-templated resources
+└── mapping/       # cluster → catalog JQ (the K8s exporter consumes this)
+```
+
+Pushed to the Port API via `make port-sync` (an idempotent `curl + jq` loop — see the Makefile). PRs against `port/` go through the same review as `apps/` or `charts/`.
+
+### How a self-service action flows
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Engineer
+    participant Port as Port (IDP)
+    participant GH as GitHub Actions
+    participant Repo as Git repo
+    participant Argo as ArgoCD
+    participant K8s as Kubernetes
+    participant Exp as port-k8s-exporter
+
+    Dev->>Port: Click "Bump image tag" on myapp-k3d
+    Port->>GH: workflow_dispatch port-bump-tag.yml<br/>{service, tag, port_context}
+    GH->>GH: edit charts/myapp/values.yaml
+    GH->>Repo: open PR (peter-evans/create-pull-request)
+    GH-->>Port: PATCH_RUN status=SUCCESS, link=PR URL
+    Dev->>Repo: review + merge
+    Repo-->>Argo: poll (~3 min) detects new revision
+    Argo->>K8s: apply updated Deployment
+    K8s->>K8s: rolling update with readiness gate
+    Exp-->>Port: push runningService.imageTag = <new tag><br/>argocdHealth = Healthy
+    Port-->>Dev: catalog updated; scorecard re-evaluated
+```
+
+### Production-readiness scorecard
+
+The rules in `port/scorecards/production-readiness.json` only check properties that the Helm chart already templates. That makes the scorecard a measure of **"is this service wired up the way the platform expects?"** rather than a separate compliance system.
+
+| Level | Rule | What it checks |
+|---|---|---|
+| Bronze | `hasHealthz` | Liveness endpoint exposed |
+| Bronze | `hasReadyz` | Readiness endpoint exposed |
+| Bronze | `argocd_healthy` | Synced + Healthy in ArgoCD |
+| Silver | `hasServiceMonitor` | Prometheus scrape configured |
+| Silver | `hasDashboard` | Auto-loaded Grafana dashboard ConfigMap |
+| Silver | `hasAlerts` | PrometheusRule present |
+| Gold | `hasPDB` | PodDisruptionBudget guards voluntary disruptions |
+| Gold | `ha_replicas` | Runs with ≥2 replicas |
+
+A service that ships with the unmodified `myapp` chart hits Gold by construction. Removing any of those resources from a fork is a deliberate downgrade — the scorecard surfaces it.
+
+### Setup
+
+```bash
+# 1. Create a free Port org at https://app.getport.io and grab API credentials
+export PORT_CLIENT_ID=...
+export PORT_CLIENT_SECRET=...
+
+# 2. Push blueprints/actions/scorecards + create the in-cluster secret
+make port-bootstrap
+
+# 3. ArgoCD reconciles port-k8s-exporter; it starts pushing entities within ~30s
+make port-status   # one-line health
+```
+
+To turn on the optional release-event workflow (`port-deploy-event.yml`):
+
+1. Set the repository variable `PORT_ENABLED=true` (Settings → Variables → Actions)
+2. Add `PORT_CLIENT_ID` / `PORT_CLIENT_SECRET` as repository secrets
+
+The other Port-driven workflows (`port-bump-tag`, `port-scaffold-service`, `port-rollback`) are dormant until invoked via Port — they don't run on push, so no secrets are needed to merge a PR that adds them.
+
+### Why this design vs. alternatives
+
+- **Port over Backstage** for this template — Port is SaaS (no infra to operate), declarative JSON config that fits the GitOps story, and natively understands ArgoCD and Kubernetes via Ocean exporters. Backstage is the right pick when you need deep customisation or fully self-hosted; the price is owning a Node app + DB + plugin tree.
+- **Actions invoke GitHub Actions, not the cluster** — keeps the change channel single (Git → ArgoCD). If Port disappears tomorrow, the workflows still work; if GitHub disappears, nothing changes. Avoids the failure mode where the IDP becomes a parallel, out-of-band control plane.
+- **`port-k8s-exporter` over a custom webhook** — it's the official Port path, the JQ mapping is reviewable as code, and it backfills on startup (no missed events on exporter restart).
+
+---
+
 ## Extending this template
 
 Practical follow-ups for projects that grow beyond a single service:
@@ -400,6 +528,8 @@ Practical follow-ups for projects that grow beyond a single service:
 - **Loki over the ELK stack** — lighter weight, integrates natively with Grafana, single-binary mode is sufficient for local. For production scale, both can be horizontally split.
 - **Traefik (k3s default) over NGINX Ingress** — bundled with k3s, zero extra setup. Larger deployments commonly choose Envoy Gateway or Istio for service mesh capabilities.
 - **Sync waves over ApplicationSets** — a single workload across two namespaces is well served by waves. ApplicationSets pay off when you have multi-environment duplication.
+- **Port over Backstage for the IDP layer** — SaaS, declarative, GitOps-friendly. Backstage wins when you need deep customisation but costs you a Node app + plugin tree to operate. See the dedicated Port section above.
+- **Port actions as PR-openers, not cluster mutators** — keeps Git as the single change channel. Self-service speed without giving up auditability or rollback.
 
 ---
 

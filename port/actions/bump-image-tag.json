@@ -1,0 +1,49 @@
+{
+  "identifier": "bump_image_tag",
+  "title": "Bump image tag",
+  "icon": "Rocket",
+  "description": "The GitOps lever. Opens a PR that edits charts/<service>/values.yaml → image.tag, so ArgoCD can reconcile. Same flow `make dev-deploy` runs locally, exposed as a self-service action.",
+  "trigger": {
+    "type": "self-service",
+    "operation": "DAY-2",
+    "userInputs": {
+      "properties": {
+        "tag": {
+          "type": "string",
+          "title": "New image tag",
+          "description": "e.g. v0.2.0, sha-abc1234, dev-<short-sha>",
+          "minLength": 1
+        },
+        "auto_sync": {
+          "type": "boolean",
+          "title": "Trigger ArgoCD sync after merge?",
+          "description": "If true, the workflow will call `argocd app sync` once the PR is merged. Otherwise ArgoCD reconciles on its normal 3-minute poll.",
+          "default": true
+        }
+      },
+      "required": ["tag"],
+      "order": ["tag", "auto_sync"]
+    },
+    "blueprintIdentifier": "runningService"
+  },
+  "invocationMethod": {
+    "type": "GITHUB",
+    "org": "WesleyCharlesBlake",
+    "repo": "chainlink-take-home",
+    "workflow": "port-bump-tag.yml",
+    "workflowInputs": {
+      "service": "{{ .entity.relations.service }}",
+      "chart_path": "{{ .entity.properties.chartPath | default \"charts/myapp\" }}",
+      "tag": "{{ .inputs.tag }}",
+      "auto_sync": "{{ .inputs.auto_sync }}",
+      "port_context": {
+        "run_id": "{{ .run.id }}",
+        "entity": "{{ .entity.identifier }}",
+        "blueprint": "{{ .action.blueprint }}",
+        "triggered_by": "{{ .trigger.by.user.email }}"
+      }
+    },
+    "reportWorkflowStatus": true
+  },
+  "requiredApproval": false
+}

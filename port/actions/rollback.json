@@ -1,0 +1,41 @@
+{
+  "identifier": "rollback_service",
+  "title": "Roll back to previous tag",
+  "icon": "Rewind",
+  "description": "Reverts the most recent image-tag change to charts/<service>/values.yaml. Implemented as `git revert` of the last commit touching that path — fully auditable, no out-of-band kubectl.",
+  "trigger": {
+    "type": "self-service",
+    "operation": "DAY-2",
+    "userInputs": {
+      "properties": {
+        "reason": {
+          "type": "string",
+          "title": "Reason",
+          "description": "Why are we rolling back? Recorded on the revert commit and the Port run.",
+          "minLength": 10
+        }
+      },
+      "required": ["reason"],
+      "order": ["reason"]
+    },
+    "blueprintIdentifier": "runningService"
+  },
+  "invocationMethod": {
+    "type": "GITHUB",
+    "org": "WesleyCharlesBlake",
+    "repo": "chainlink-take-home",
+    "workflow": "port-rollback.yml",
+    "workflowInputs": {
+      "service": "{{ .entity.relations.service }}",
+      "chart_path": "{{ .entity.properties.chartPath | default \"charts/myapp\" }}",
+      "reason": "{{ .inputs.reason }}",
+      "port_context": {
+        "run_id": "{{ .run.id }}",
+        "entity": "{{ .entity.identifier }}",
+        "triggered_by": "{{ .trigger.by.user.email }}"
+      }
+    },
+    "reportWorkflowStatus": true
+  },
+  "requiredApproval": true
+}

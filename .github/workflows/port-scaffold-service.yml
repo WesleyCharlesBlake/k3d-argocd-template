@@ -1,0 +1,166 @@
+name: port-scaffold-service
+
+# Invoked by Port's "Scaffold new service" action.
+# Copies the myapp chart + ArgoCD Application as a template for the new service,
+# then opens a PR. Once merged, ArgoCD reconciles the new workload — same path
+# the existing myapp service rides on.
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Service name (kebab-case)'
+        required: true
+        type: string
+      language:
+        description: 'Language'
+        required: true
+        type: string
+        default: 'Go'
+      tier:
+        description: 'Tier (1=critical, 3=best-effort)'
+        required: true
+        type: string
+        default: '2'
+      needs_postgres:
+        description: 'Wire to CloudNativePG postgres-app Secret'
+        required: false
+        type: boolean
+        default: false
+      oncall:
+        description: 'On-call team'
+        required: false
+        type: string
+        default: 'platform'
+      port_context:
+        description: 'Port run context'
+        required: false
+        type: string
+        default: '{}'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  scaffold:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate name
+        run: |
+          NAME='${{ inputs.name }}'
+          if ! echo "$NAME" | grep -Eq '^[a-z][a-z0-9-]{1,30}[a-z0-9]$'; then
+            echo "::error::Service name '$NAME' must be kebab-case (^[a-z][a-z0-9-]{1,30}[a-z0-9]\$)"
+            exit 1
+          fi
+          if [ -d "charts/$NAME" ] || [ -f "apps/workload/$NAME.yaml" ]; then
+            echo "::error::Service '$NAME' already exists in the repo."
+            exit 1
+          fi
+
+      - name: Report in-progress to Port
+        if: ${{ fromJSON(inputs.port_context).run_id != '' }}
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: PATCH_RUN
+          runId: ${{ fromJSON(inputs.port_context).run_id }}
+          logMessage: 'Scaffolding charts/${{ inputs.name }} and apps/workload/${{ inputs.name }}.yaml'
+
+      - name: Copy chart template
+        run: |
+          NAME='${{ inputs.name }}'
+          cp -R charts/myapp "charts/$NAME"
+          # Replace chart metadata in-place. Templates reference `.Chart.Name`
+          # already, so values changes alone are enough — no template edits.
+          sed -i "s/^name: myapp/name: $NAME/" "charts/$NAME/Chart.yaml"
+          sed -i "s/myapp.localhost/$NAME.localhost/g" "charts/$NAME/values.yaml"
+
+      - name: Drop Postgres wiring if not needed
+        if: ${{ inputs.needs_postgres == 'false' }}
+        run: |
+          NAME='${{ inputs.name }}'
+          # Comment out the database block — chart treats `database.connectionSecret.name: ""` as "no DB"
+          yq -i '.database.connectionSecret.name = ""' "charts/$NAME/values.yaml" || true
+
+      - name: Render ArgoCD Application
+        run: |
+          NAME='${{ inputs.name }}'
+          cat > "apps/workload/$NAME.yaml" <<EOF
+          # Scaffolded by Port self-service on $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # by ${{ fromJSON(inputs.port_context).triggered_by }}.
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: $NAME
+            namespace: argocd
+            annotations:
+              argocd.argoproj.io/sync-wave: "10"
+              platform.tier: "${{ inputs.tier }}"
+              platform.oncall: "${{ inputs.oncall }}"
+              platform.language: "${{ inputs.language }}"
+            finalizers:
+              - resources-finalizer.argocd.argoproj.io
+          spec:
+            project: default
+            source:
+              repoURL: https://github.com/WesleyCharlesBlake/k3d-argocd-template.git
+              targetRevision: main
+              path: charts/$NAME
+              helm:
+                releaseName: $NAME
+                valueFiles:
+                  - values.yaml
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: workload
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+                - ServerSideApply=true
+              retry:
+                limit: 5
+                backoff: { duration: 5s, factor: 2, maxDuration: 3m }
+          EOF
+
+      - name: Open PR
+        id: pr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: port/scaffold-${{ inputs.name }}
+          commit-message: |
+            feat(${{ inputs.name }}): scaffold new service via Port
+
+            Tier: ${{ inputs.tier }} | On-call: ${{ inputs.oncall }} | Postgres: ${{ inputs.needs_postgres }}
+            Triggered by ${{ fromJSON(inputs.port_context).triggered_by }}
+          title: 'feat(${{ inputs.name }}): scaffold new service via Port'
+          body: |
+            New service scaffolded from the myapp template via Port self-service.
+
+            - **Name:** `${{ inputs.name }}`
+            - **Language:** ${{ inputs.language }}
+            - **Tier:** ${{ inputs.tier }}
+            - **Postgres-backed:** ${{ inputs.needs_postgres }}
+            - **On-call:** ${{ inputs.oncall }}
+
+            On merge, ArgoCD discovers `apps/workload/${{ inputs.name }}.yaml`
+            and reconciles the new chart at `charts/${{ inputs.name }}` into the
+            `workload` namespace.
+          labels: port,scaffold,automated
+
+      - name: Report success to Port
+        if: ${{ always() && fromJSON(inputs.port_context).run_id != '' }}
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: PATCH_RUN
+          runId: ${{ fromJSON(inputs.port_context).run_id }}
+          status: ${{ job.status == 'success' && 'SUCCESS' || 'FAILURE' }}
+          link: ${{ steps.pr.outputs.pull-request-url }}
