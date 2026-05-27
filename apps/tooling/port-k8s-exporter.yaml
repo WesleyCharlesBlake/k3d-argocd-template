@@ -34,10 +34,12 @@ spec:
       releaseName: port-k8s-exporter
       values: |
         # Credentials live in an externally-created Secret so they're never
-        # committed to Git. See `make port-bootstrap`.
+        # committed to Git. See `make port-bootstrap`. The Secret must hold
+        # PORT_CLIENT_ID and PORT_CLIENT_SECRET keys (the names the exporter
+        # reads via envFrom).
         secret:
-          useExistingSecret:
-            name: port-credentials
+          useExistingSecret: true
+          name: port-credentials
 
         # State key namespaces the exporter's checkpoint in Port's storage,
         # so multiple clusters (dev/staging/prod) can sync into the same

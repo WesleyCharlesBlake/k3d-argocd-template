@@ -32,34 +32,56 @@ spec:
     helm:
       releaseName: port-ocean-github
       values: |
-        # Credentials sourced from the existing Port secret (same one the
-        # K8s exporter uses) so there's only one place to rotate.
+        # The chart's own Secret is disabled — we bring our own via the two
+        # existing Secrets (`port-credentials`, `github-ocean-secrets`). All
+        # creds enter the pod as direct `env:` entries with `secretKeyRef`,
+        # which is the universal escape hatch and avoids the chart's
+        # `required ... | b64enc` template guard.
+        secret:
+          create: false
+          name: ""
+
         port:
-          existingSecret: port-credentials
-          clientIdKey: PORT_CLIENT_ID
-          clientSecretKey: PORT_CLIENT_SECRET
+          # baseUrl is the only non-secret port.* setting that needs to be
+          # the .io domain (not .getport.io, which redirects).
           baseUrl: https://api.port.io
+          # clientId / clientSecret intentionally unset — see extraEnv below.
+
+        # extraEnv beats envFrom for matching names, and our env var names
+        # exactly match what the Ocean framework reads:
+        #   OCEAN__PORT__CLIENT_ID / _SECRET           — port.clientId/Secret
+        #   OCEAN__INTEGRATION__CONFIG__GITHUB_TOKEN   — integration.secrets.githubToken
+        extraEnv:
+          - name: OCEAN__PORT__CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: port-credentials
+                key: PORT_CLIENT_ID
+          - name: OCEAN__PORT__CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: port-credentials
+                key: PORT_CLIENT_SECRET
+          - name: OCEAN__INTEGRATION__CONFIG__GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-ocean-secrets
+                key: githubToken
 
         integration:
           identifier: github-ocean
           type: github-ocean
           eventListener:
-            # POLLING is fine for local — production would use the KAFKA
-            # listener or webhooks for sub-minute latency.
+            # POLLING is fine for local — production would use KAFKA or
+            # webhooks for sub-minute latency.
             type: POLLING
           config:
-            # For GitHub Cloud use api.github.com. For Enterprise Server,
-            # point at your Enterprise host. The placeholder you saw in
-            # the docs (`example.com`) won't authenticate — leaving the
-            # real value here keeps the integration functional out of the box.
+            # api.github.com for GitHub Cloud; swap for your Enterprise host.
             githubHost: https://api.github.com
-          secrets:
-            # githubToken is read from the externally-created Secret so the
-            # PAT is never committed. `make port-bootstrap` creates this if
-            # $GITHUB_PAT is set in the same env.
-            githubTokenFromSecret:
-              name: github-ocean-secrets
-              key: githubToken
+          # secrets intentionally left empty: githubToken is injected via
+          # extraEnv above so the PAT lives only in the K8s Secret, never
+          # in the chart's own Secret (which would be in the rendered
+          # Application CR).
 
         # createDefaultResources=false: blueprints/actions/scorecards live
         # under port/ as IaC, same as the K8s exporter.
