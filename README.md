@@ -455,9 +455,11 @@ sequenceDiagram
     Port-->>Dev: catalog updated; scorecard re-evaluated
 ```
 
-### Production-readiness scorecard
+### Runtime-readiness scorecard
 
-The rules in `port/scorecards/production-readiness.json` only check properties that the Helm chart already templates. That makes the scorecard a measure of **"is this service wired up the way the platform expects?"** rather than a separate compliance system.
+The rules in `port/scorecards/production-readiness.json` (identifier: `runtime_readiness`) only check properties that the Helm chart already templates. That makes the scorecard a measure of **"is this service wired up the way the platform expects?"** rather than a separate compliance system. It binds to `runningService` (one entity per *running instance* of a service in a cluster) so the score reflects what's actually live, not what's declared.
+
+It deliberately runs alongside Port's built-in `production_readiness` scorecard, which binds to the `service` blueprint and checks ownership / README / repo metadata. The two don't overlap: theirs is "does this service have the org metadata we expect?", ours is "is this *running instance* observable and resilient?"
 
 | Level | Rule | What it checks |
 |---|---|---|

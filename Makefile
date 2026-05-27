@@ -306,16 +306,24 @@ port-sync:
 	  id=$$(jq -r .identifier "$$f"); \
 	  bp=$$(jq -r .blueprint "$$f"); \
 	  echo "  • $$id (blueprint: $$bp)"; \
-	  # Port's PUT endpoint expects {scorecards: [...]} for bulk upsert.        \
-	  # `blueprint` is encoded in the URL — strip it from the body.             \
-	  body=$$(jq '{scorecards: [(. | del(.blueprint))]}' "$$f"); \
-	  resp=$$(curl -sS -w '\n%{http_code}' -X PUT "$(PORT_BASE_URL)/v1/blueprints/$$bp/scorecards" \
+	  del_resp=$$(curl -sS -w '\n%{http_code}' -X DELETE "$(PORT_BASE_URL)/v1/blueprints/$$bp/scorecards/$$id" \
+	    -H "Authorization: Bearer $$TOKEN"); \
+	  del_code=$$(echo "$$del_resp" | tail -n1); \
+	  if [ "$$del_code" = "200" ] || [ "$$del_code" = "204" ]; then \
+	    echo "    ↻ deleted existing scorecard (HTTP $$del_code)"; \
+	  elif [ "$$del_code" = "404" ]; then \
+	    echo "    + no existing scorecard (HTTP 404)"; \
+	  else \
+	    echo "    ⚠  DELETE returned HTTP $$del_code — $$(echo "$$del_resp" | sed '$$d')"; \
+	  fi; \
+	  body=$$(jq 'del(.blueprint, .description)' "$$f"); \
+	  resp=$$(curl -sS -w '\n%{http_code}' -X POST "$(PORT_BASE_URL)/v1/blueprints/$$bp/scorecards" \
 	    -H "Authorization: Bearer $$TOKEN" \
 	    -H 'Content-Type: application/json' \
 	    -d "$$body"); \
 	  code=$$(echo "$$resp" | tail -n1); \
 	  if [ "$$code" != "200" ] && [ "$$code" != "201" ]; then \
-	    echo "    ❌ HTTP $$code — $$(echo "$$resp" | sed '$$d')"; \
+	    echo "    ❌ POST returned HTTP $$code — $$(echo "$$resp" | sed '$$d')"; \
 	    exit 1; \
 	  fi; \
 	done; \

@@ -71,7 +71,7 @@ resources:
   # Matches by label app.kubernetes.io/name == <deployment name>
   - kind: monitoring.coreos.com/v1/servicemonitors
     selector:
-      query: '.metadata.namespace == "workload"'
+      query: '.metadata.namespace == "workload" and (.metadata.labels."app.kubernetes.io/name" != null)'
     port:
       entity:
         mappings:
@@ -82,7 +82,7 @@ resources:
 
   - kind: monitoring.coreos.com/v1/prometheusrules
     selector:
-      query: '.metadata.namespace == "workload"'
+      query: '.metadata.namespace == "workload" and (.metadata.labels."app.kubernetes.io/name" != null)'
     port:
       entity:
         mappings:
@@ -93,7 +93,7 @@ resources:
 
   - kind: policy/v1/poddisruptionbudgets
     selector:
-      query: '.metadata.namespace == "workload"'
+      query: '.metadata.namespace == "workload" and (.metadata.labels."app.kubernetes.io/name" != null)'
     port:
       entity:
         mappings:
@@ -107,7 +107,7 @@ resources:
   # it back to the runningService entity.
   - kind: v1/configmaps
     selector:
-      query: '.metadata.labels.grafana_dashboard == "1" and .metadata.namespace == "workload"'
+      query: '.metadata.labels.grafana_dashboard == "1" and .metadata.namespace == "workload" and (.metadata.labels."app.kubernetes.io/name" != null)'
     port:
       entity:
         mappings:

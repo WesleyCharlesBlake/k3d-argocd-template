@@ -1,7 +1,7 @@
 {
-  "identifier": "production_readiness",
-  "title": "Production readiness",
-  "description": "What 'ready to take traffic' means for a service running in this platform. Each rule maps to something the Helm chart already templates — so passing Bronze means the chart is wired up correctly, Gold means the service is properly observable and resilient.",
+  "identifier": "runtime_readiness",
+  "title": "Runtime readiness",
+  "description": "Instance-level readiness for a workload running in the cluster. Complements Port's default service-level `production_readiness` scorecard (which checks ownership / README / repo metadata) by focusing on what the chart actually templates: liveness/readiness endpoints, ServiceMonitor, alerts, PDB, replica count, ArgoCD sync health.",
   "blueprint": "runningService",
   "levels": [
     { "title": "Basic", "color": "lightGray" },

@@ -86,13 +86,13 @@
     "service": {
       "title": "Service",
       "target": "service",
-      "required": true,
+      "required": false,
       "many": false
     },
     "cluster": {
       "title": "Cluster",
       "target": "k8sCluster",
-      "required": true,
+      "required": false,
       "many": false
     }
   }
