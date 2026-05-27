@@ -493,11 +493,27 @@ To turn on the optional release-event workflow (`port-deploy-event.yml`):
 
 The other Port-driven workflows (`port-bump-tag`, `port-scaffold-service`, `port-rollback`) are dormant until invoked via Port — they don't run on push, so no secrets are needed to merge a PR that adds them.
 
+`peter-evans/create-pull-request` (used by `port-bump-tag` and `port-scaffold-service`) needs **Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"** turned on. Without it, every action will succeed up to the PR-open step and then fail with "GitHub Actions is not permitted to create or approve pull requests."
+
+### GitHub data: hosted, not self-hosted
+
+For GitHub catalog data (repos, PRs, workflows, teams), this template uses **Port's hosted GitHub integration** — installed by adding Port's GitHub App to the repo (Port UI → Integrations → GitHub). No in-cluster component.
+
+The trade-off is deliberate:
+
+| Data source | Where the integration runs | Why |
+|---|---|---|
+| Cluster state (`Deployment`, `Application`, `ServiceMonitor`, …) | In-cluster (`port-k8s-exporter`) | The data only exists inside the cluster — there's no public API to scrape. |
+| GitHub state (repos, PRs, workflows) | Port's hosted backend (via the GitHub App) | GitHub Cloud is already a public API. Running an in-cluster scraper for it would mean operating a Helm chart + rotating a PAT for no architectural gain. |
+
+The self-hosted alternative (`port-ocean` Helm chart for the `github-ocean` integration) is the right pick for **GitHub Enterprise Server behind a firewall** or **data-residency requirements** — neither of which applies to a public GitHub Cloud repo.
+
 ### Why this design vs. alternatives
 
 - **Port over Backstage** for this template — Port is SaaS (no infra to operate), declarative JSON config that fits the GitOps story, and natively understands ArgoCD and Kubernetes via Ocean exporters. Backstage is the right pick when you need deep customisation or fully self-hosted; the price is owning a Node app + DB + plugin tree.
 - **Actions invoke GitHub Actions, not the cluster** — keeps the change channel single (Git → ArgoCD). If Port disappears tomorrow, the workflows still work; if GitHub disappears, nothing changes. Avoids the failure mode where the IDP becomes a parallel, out-of-band control plane.
 - **`port-k8s-exporter` over a custom webhook** — it's the official Port path, the JQ mapping is reviewable as code, and it backfills on startup (no missed events on exporter restart).
+- **Hosted GitHub integration over self-hosted Ocean** — see the "GitHub data" section above. Self-host the things you can't ingest any other way; use SaaS for the rest. Avoids running a second exporter (with its own PAT and rotation cadence) for data that already lives behind a public API.
 
 ---
 
