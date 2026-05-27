@@ -69,7 +69,7 @@
         "title": "PrometheusRule present"
       }
     },
-    "required": ["imageTag", "namespace"]
+    "required": []
   },
   "calculationProperties": {},
   "mirrorProperties": {

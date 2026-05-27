@@ -306,10 +306,25 @@ port-sync:
 	  id=$$(jq -r .identifier "$$f"); \
 	  bp=$$(jq -r .blueprint "$$f"); \
 	  echo "  • $$id (blueprint: $$bp)"; \
-	  curl -fsS -o /dev/null -X PUT "$(PORT_BASE_URL)/v1/blueprints/$$bp/scorecards/$$id" \
+	  # Port's PUT endpoint expects {scorecards: [...]} for bulk upsert.        \
+	  # `blueprint` is encoded in the URL — strip it from the body.             \
+	  body=$$(jq '{scorecards: [(. | del(.blueprint))]}' "$$f"); \
+	  resp=$$(curl -sS -w '\n%{http_code}' -X PUT "$(PORT_BASE_URL)/v1/blueprints/$$bp/scorecards" \
 	    -H "Authorization: Bearer $$TOKEN" \
 	    -H 'Content-Type: application/json' \
-	    -d @"$$f" || curl -fsS -o /dev/null -X POST "$(PORT_BASE_URL)/v1/blueprints/$$bp/scorecards" \
+	    -d "$$body"); \
+	  code=$$(echo "$$resp" | tail -n1); \
+	  if [ "$$code" != "200" ] && [ "$$code" != "201" ]; then \
+	    echo "    ❌ HTTP $$code — $$(echo "$$resp" | sed '$$d')"; \
+	    exit 1; \
+	  fi; \
+	done; \
+	echo "🌱 Seeding singleton entities..."; \
+	for f in port/entities/*.json; do \
+	  id=$$(jq -r .identifier "$$f"); \
+	  bp=$$(jq -r .blueprint "$$f"); \
+	  echo "  • $$id (blueprint: $$bp)"; \
+	  curl -fsS -o /dev/null -X POST "$(PORT_BASE_URL)/v1/blueprints/$$bp/entities?upsert=true&merge=true" \
 	    -H "Authorization: Bearer $$TOKEN" \
 	    -H 'Content-Type: application/json' \
 	    -d @"$$f"; \

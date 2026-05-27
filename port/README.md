@@ -16,6 +16,9 @@ port/
 │   └── rollback.json            # git revert via PR
 ├── scorecards/                  # quality gates
 │   └── production-readiness.json
+├── entities/                    # singleton seed entities (things that aren't
+│   └── k8s-cluster.json         #   derivable from cluster state — the cluster
+│                                #   itself, environment metadata, etc.)
 └── mapping/
     └── k8s-exporter-config.yaml # cluster → catalog translation (canonical)
 ```
