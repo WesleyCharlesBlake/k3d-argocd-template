@@ -1,0 +1,37 @@
+# Scaffolded by Port self-service on 2026-05-27T18:37:14Z
+# by .
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shoe-shop
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+    platform.tier: "2"
+    platform.oncall: "platform"
+    platform.language: "Go"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/WesleyCharlesBlake/k3d-argocd-template.git
+    targetRevision: main
+    path: charts/shoe-shop
+    helm:
+      releaseName: shoe-shop
+      valueFiles:
+        - values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: workload
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff: { duration: 5s, factor: 2, maxDuration: 3m }

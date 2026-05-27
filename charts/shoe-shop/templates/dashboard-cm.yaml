@@ -1,0 +1,124 @@
+{{- if .Values.dashboard.enabled -}}
+# Grafana dashboard, delivered as a ConfigMap with the label the
+# kube-prometheus-stack Grafana sidecar auto-discovers. No manual import step.
+#
+# This dashboard provides a baseline view (request rate, error rate, p99
+# latency, replica count). Production dashboards are typically richer and
+# split by concern (RED metrics, USE metrics, business KPIs).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "myapp.fullname" . }}-dashboard
+  labels:
+    {{- include "myapp.labels" . | nindent 4 }}
+    grafana_dashboard: "1"        # sidecar discovery label
+data:
+  myapp.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "schemaVersion": 38,
+      "tags": ["myapp", "k3d-argocd-template"],
+      "time": { "from": "now-15m", "to": "now" },
+      "title": "myapp",
+      "uid": "myapp-overview",
+      "version": 1,
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Replicas Up",
+          "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+          "targets": [
+            {
+              "expr": "sum(up{job=~\".*myapp.*\"})",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Build version",
+          "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+          "targets": [
+            {
+              "expr": "myapp_build_info",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [],
+              "noValue": "no signal"
+            }
+          }
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Request rate (per second, by status)",
+          "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (status) (rate(myapp_http_requests_total[1m]))",
+              "legendFormat": "{{`{{status}}`}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "p99 latency (seconds)",
+          "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum by (le, path) (rate(myapp_http_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{`{{path}}`}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Error rate (5xx %)",
+          "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "100 * (sum(rate(myapp_http_requests_total{status=~\"5..\"}[1m])) / clamp_min(sum(rate(myapp_http_requests_total[1m])), 1))",
+              "legendFormat": "5xx %",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Pod restarts (last 1h)",
+          "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum(increase(kube_pod_container_status_restarts_total{container=\"myapp\"}[1h]))",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    }
+{{- end }}
