@@ -1,0 +1,32 @@
+───────────────────────────────────────────────────────────────────
+myapp deployed to namespace `{{ .Release.Namespace }}` as `{{ .Release.Name }}`.
+───────────────────────────────────────────────────────────────────
+
+Application URL:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  http://{{ .host }}/
+{{- end }}
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "myapp.fullname" . }} 8080:{{ .Values.service.port }}
+  → http://localhost:8080
+{{- end }}
+
+Probe and metrics endpoints:
+  /healthz   liveness     (200 if process alive)
+  /readyz    readiness    (200 if DB reachable)
+  /metrics   prometheus   (scraped via ServiceMonitor)
+
+Observability:
+  Grafana:   http://grafana.localhost   (login: admin / admin)
+  Dashboard: pre-loaded as `{{ include "myapp.fullname" . }}-dashboard`
+
+Try a GitOps converge:
+  1. Edit charts/myapp/values.yaml (e.g. replicaCount)
+  2. git commit && git push
+  3. Watch ArgoCD reconcile within ~3 minutes
+  4. Confirm in Grafana / kubectl get pods
+
+Roll back:
+  git revert HEAD && git push    # ArgoCD reconciles back automatically
+───────────────────────────────────────────────────────────────────

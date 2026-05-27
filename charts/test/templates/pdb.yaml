@@ -1,0 +1,16 @@
+{{- if .Values.podDisruptionBudget.enabled -}}
+# PDB ensures that voluntary disruptions (node drains, cluster upgrades) don't
+# take all replicas down simultaneously. minAvailable: 1 means at least one pod
+# stays serving during a node drain even with replicaCount: 2.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "myapp.fullname" . }}
+  labels:
+    {{- include "myapp.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "myapp.selectorLabels" . | nindent 6 }}
+{{- end }}

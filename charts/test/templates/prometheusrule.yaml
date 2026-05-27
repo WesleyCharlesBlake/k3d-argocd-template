@@ -1,0 +1,39 @@
+{{- if .Values.serviceMonitor.enabled -}}
+# A minimal PrometheusRule. Demonstrates the alerting integration without
+# being noisy. kube-prometheus-stack auto-discovers PrometheusRules with the
+# matching label.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "myapp.fullname" . }}
+  labels:
+    {{- include "myapp.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: myapp.rules
+      rules:
+        - alert: MyappDown
+          # Fires when no replicas are reporting `up` to Prometheus for 1 minute.
+          # Wire to Alertmanager → PagerDuty / OpsGenie / Slack as needed.
+          expr: sum(up{job=~".*myapp.*"}) == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "myapp is down"
+            description: "No myapp replicas are reporting `up` to Prometheus for 1m."
+
+        - alert: MyappHighErrorRate
+          expr: |
+            (sum(rate(myapp_http_requests_total{status=~"5.."}[5m]))
+              / clamp_min(sum(rate(myapp_http_requests_total[5m])), 1)) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "myapp 5xx rate above 5%"
+            description: "5xx error rate has been > 5% for 5 minutes."
+{{- end }}

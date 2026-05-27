@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "myapp.fullname" . }}
+  labels:
+    {{- include "myapp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+
+  # Rolling update with maxUnavailable=0 — zero-downtime deploys.
+  # If a new pod fails its readiness probe, the rollout halts and old pods continue serving.
+  strategy:
+    type: {{ .Values.strategy.type }}
+    {{- if eq .Values.strategy.type "RollingUpdate" }}
+    rollingUpdate:
+      maxSurge: {{ .Values.strategy.rollingUpdate.maxSurge }}
+      maxUnavailable: {{ .Values.strategy.rollingUpdate.maxUnavailable }}
+    {{- end }}
+
+  selector:
+    matchLabels:
+      {{- include "myapp.selectorLabels" . | nindent 6 }}
+
+  template:
+    metadata:
+      labels:
+        {{- include "myapp.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Force a rollout when ConfigMap-backed values change. Helm sees a new
+        # checksum, the pod template hash changes, kubelet rolls the pods.
+        checksum/values: {{ .Values | toYaml | sha256sum }}
+    spec:
+      # Pod-level security defaults — production-shaped.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532          # nonroot user in distroless
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: myapp
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          env:
+            - name: LISTEN_ADDR
+              value: ":8080"
+            # DB_URL comes from the CloudNativePG-generated `postgres-app` Secret.
+            # CNPG populates a `uri` key with the full connection string —
+            # username, password, host, port, database, SSL mode all baked in.
+            # Single source of truth; no string concatenation in the template.
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.connectionSecret.name }}
+                  key: {{ .Values.database.connectionSecret.key }}
+
+          livenessProbe:
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+
+          # Container-level security — read-only fs, drop all caps, no privilege escalation.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+      # Disrupt-aware scheduling: spread replicas across nodes when possible.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "myapp.selectorLabels" . | nindent 14 }}
+
+      # Allow time for graceful shutdown — must be at least SHUTDOWN_GRACE in the app.
+      terminationGracePeriodSeconds: 30
