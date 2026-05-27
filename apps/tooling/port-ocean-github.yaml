@@ -1,0 +1,87 @@
+# Port Ocean — GitHub integration.
+#
+# Pulls GitHub repositories, pull requests, workflows, and teams into the Port
+# catalog. Complements port-k8s-exporter (which covers in-cluster state): the
+# pair gives Port a view of "where is this service's code + history" *and*
+# "where is it running + healthy."
+#
+# Gated on two Secrets in the `tooling` namespace:
+#   - port-credentials       (PORT_CLIENT_ID, PORT_CLIENT_SECRET)
+#   - github-ocean-secrets   (githubToken — a PAT with read access)
+#
+# Both are created by `make port-bootstrap` (which now also picks up
+# $GITHUB_PAT, the same env var ArgoCD's repo creds use).
+#
+# Sync wave -2: same as the K8s exporter — independent of workload sync waves.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: port-ocean-github
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://port-labs.github.io/helm-charts
+    chart: port-ocean
+    targetRevision: 0.17.0
+    helm:
+      releaseName: port-ocean-github
+      values: |
+        # Credentials sourced from the existing Port secret (same one the
+        # K8s exporter uses) so there's only one place to rotate.
+        port:
+          existingSecret: port-credentials
+          clientIdKey: PORT_CLIENT_ID
+          clientSecretKey: PORT_CLIENT_SECRET
+          baseUrl: https://api.port.io
+
+        integration:
+          identifier: github-ocean
+          type: github-ocean
+          eventListener:
+            # POLLING is fine for local — production would use the KAFKA
+            # listener or webhooks for sub-minute latency.
+            type: POLLING
+          config:
+            # For GitHub Cloud use api.github.com. For Enterprise Server,
+            # point at your Enterprise host. The placeholder you saw in
+            # the docs (`example.com`) won't authenticate — leaving the
+            # real value here keeps the integration functional out of the box.
+            githubHost: https://api.github.com
+          secrets:
+            # githubToken is read from the externally-created Secret so the
+            # PAT is never committed. `make port-bootstrap` creates this if
+            # $GITHUB_PAT is set in the same env.
+            githubTokenFromSecret:
+              name: github-ocean-secrets
+              key: githubToken
+
+        # createDefaultResources=false: blueprints/actions/scorecards live
+        # under port/ as IaC, same as the K8s exporter.
+        initializePortResources: false
+        sendRawDataExamples: false
+        scheduledResyncInterval: 360
+
+        resources:
+          requests: { cpu: 50m, memory: 100Mi }
+          limits:   { cpu: 200m, memory: 256Mi }
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tooling
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff: { duration: 5s, factor: 2, maxDuration: 3m }

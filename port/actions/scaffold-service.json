@@ -48,7 +48,7 @@
   "invocationMethod": {
     "type": "GITHUB",
     "org": "WesleyCharlesBlake",
-    "repo": "chainlink-take-home",
+    "repo": "k3d-argocd-template",
     "workflow": "port-scaffold-service.yml",
     "workflowInputs": {
       "name": "{{ .inputs.name }}",

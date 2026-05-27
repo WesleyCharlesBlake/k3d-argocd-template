@@ -260,9 +260,21 @@ port-bootstrap:
 	  --from-literal=PORT_CLIENT_ID="$$PORT_CLIENT_ID" \
 	  --from-literal=PORT_CLIENT_SECRET="$$PORT_CLIENT_SECRET" \
 	  --dry-run=client -o yaml | kubectl apply -f -
+	@if [ -n "$$GITHUB_PAT" ]; then \
+	  echo "🔐 Creating github-ocean-secrets in $(PORT_NAMESPACE) (GITHUB_PAT set)..."; \
+	  kubectl -n $(PORT_NAMESPACE) create secret generic github-ocean-secrets \
+	    --from-literal=githubToken="$$GITHUB_PAT" \
+	    --dry-run=client -o yaml | kubectl apply -f -; \
+	else \
+	  echo "ℹ️  GITHUB_PAT not set; skipping github-ocean Secret."; \
+	  echo "   The port-ocean-github Application will stay Progressing until you set it"; \
+	  echo "   and re-run 'make port-bootstrap'."; \
+	fi
 	@$(MAKE) port-sync
-	@echo "✅ Port bootstrapped. The exporter Application should reach Healthy on the next ArgoCD reconcile."
-	@echo "   Force it: kubectl -n argocd patch app port-k8s-exporter --type merge -p '{\"operation\":{\"sync\":{}}}'"
+	@echo "✅ Port bootstrapped. The tooling Applications should reach Healthy on the next ArgoCD reconcile."
+	@echo "   Force them:"
+	@echo "     kubectl -n argocd patch app port-k8s-exporter --type merge -p '{\"operation\":{\"sync\":{}}}'"
+	@echo "     kubectl -n argocd patch app port-ocean-github  --type merge -p '{\"operation\":{\"sync\":{}}}'"
 
 # Push blueprints, actions, scorecards from port/ to the Port API.
 # This is the equivalent of `kubectl apply` for the IDP layer.
